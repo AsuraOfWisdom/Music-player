@@ -8,7 +8,7 @@
 # for YouTube's anti-bot changes very frequently, so staying current
 # matters here more than it would for most tools.
 [phases.setup]
-nixPkgs = ['...', 'ffmpeg', 'curl', 'ca-certificates']
+nixPkgs = ['...', 'ffmpeg', 'curl']
 
 [phases.ytdlp]
 cmds = [
