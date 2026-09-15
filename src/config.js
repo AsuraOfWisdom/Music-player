@@ -6,4 +6,5 @@ module.exports = {
   guildId: process.env.GUILD_ID || null,
   spotifyClientId: process.env.SPOTIFY_CLIENT_ID,
   spotifyClientSecret: process.env.SPOTIFY_CLIENT_SECRET,
+  youtubeCookie: process.env.YOUTUBE_COOKIE || null,
 };
