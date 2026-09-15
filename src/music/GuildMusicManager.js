@@ -23,6 +23,7 @@ class GuildMusicManager {
     this.loopMode = LOOP_MODES.OFF;
     this.volume = 100;
     this.idleTimer = null;
+    this._currentCleanup = null; // kills the previous track's yt-dlp process, if any
 
     this.player.on(AudioPlayerStatus.Idle, () => this._playNext());
     this.player.on('error', (error) => {
@@ -64,6 +65,13 @@ class GuildMusicManager {
   }
 
   async _playNext() {
+    // The previous track (if any) is done, being skipped, or errored —
+    // make sure its yt-dlp process (if it had one) actually exits.
+    if (this._currentCleanup) {
+      try { this._currentCleanup(); } catch { /* already gone */ }
+      this._currentCleanup = null;
+    }
+
     if (this.loopMode === LOOP_MODES.TRACK && this.currentTrack) {
       this.queue.unshift(this.currentTrack);
     } else if (this.loopMode === LOOP_MODES.QUEUE && this.currentTrack) {
@@ -78,7 +86,8 @@ class GuildMusicManager {
     }
 
     try {
-      const resource = await createResourceForTrack(next);
+      const { resource, cleanup } = await createResourceForTrack(next);
+      this._currentCleanup = cleanup;
       resource.volume?.setVolume(this.volume / 100);
       this.currentTrack = next;
       this.player.play(resource);
@@ -141,6 +150,10 @@ class GuildMusicManager {
     this._clearIdleTimer();
     this.queue = [];
     this.currentTrack = null;
+    if (this._currentCleanup) {
+      try { this._currentCleanup(); } catch { /* already gone */ }
+      this._currentCleanup = null;
+    }
     try {
       this.player.stop(true);
       this.connection?.destroy();
