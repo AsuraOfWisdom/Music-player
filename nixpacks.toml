@@ -1,0 +1,6 @@
+# Adds system packages the Node app shells out to (yt-dlp for YouTube
+# extraction, ffmpeg as a transcoding fallback) alongside Railway's
+# auto-detected Node.js/npm setup. The '...' keeps the auto-detected
+# packages instead of replacing them.
+[phases.setup]
+nixPkgs = ['...', 'ffmpeg', 'yt-dlp']
