@@ -1,7 +1,6 @@
 const fs = require('fs');
 const path = require('path');
 const { Client, GatewayIntentBits, Collection, REST, Routes } = require('discord.js');
-const play = require('play-dl');
 const config = require('./config');
 const { ensureCookiesFile } = require('./music/ytdlp');
 
@@ -32,18 +31,8 @@ for (const file of fs.readdirSync(commandsPath).filter((f) => f.endsWith('.js'))
   client.commands.set(command.data.name, command);
 }
 
-client.once('ready', async () => {
+client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
-
-  // SoundCloud streaming needs a client ID; play-dl can fetch a free one
-  // automatically. If this fails, set SOUNDCLOUD_CLIENT_ID yourself (see README).
-  try {
-    const scClientId = await play.getFreeClientID();
-    play.setToken({ soundcloud: { client_id: scClientId } });
-    console.log('SoundCloud client ID configured.');
-  } catch (err) {
-    console.warn('Could not auto-configure a SoundCloud client ID:', err.message);
-  }
 });
 
 client.on('interactionCreate', async (interaction) => {
