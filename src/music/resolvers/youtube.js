@@ -19,7 +19,7 @@ function toTrack(info) {
  * Resolve a direct YouTube video URL into a track object, via yt-dlp.
  */
 async function resolveYouTube(url) {
-  const [info] = await dumpJson(url);
+  const [info] = await dumpJson(url, { noPlaylist: true });
   if (!info) throw new Error('Could not read that YouTube video.');
   return [toTrack(info)];
 }
@@ -30,7 +30,7 @@ async function resolveYouTube(url) {
  * match for tracks that came from Spotify/Apple Music (metadata only).
  */
 async function searchYouTube(query, limit = 1) {
-  const results = await dumpJson(`ytsearch${limit}:${query}`);
+  const results = await dumpJson(`ytsearch${limit}:${query}`, { noPlaylist: true });
   return results.map(toTrack);
 }
 
