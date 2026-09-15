@@ -1,16 +1,21 @@
 const play = require('play-dl');
-const { createAudioResource } = require('@discordjs/voice');
+const { createAudioResource, StreamType } = require('@discordjs/voice');
+const { spawnAudioStream } = require('./ytdlp');
 const { searchYouTube } = require('./resolvers/youtube');
 
 /**
  * Turn a track object into a playable @discordjs/voice AudioResource.
  *
- * Tracks from YouTube/SoundCloud already carry a playable `url`. Tracks
- * from Spotify/Apple Music are metadata-only (url === null) — for those
- * we search YouTube right here, at play time, for the closest match.
- * Doing this lazily (instead of up front when queuing) keeps big
- * playlists fast to queue and avoids burning YouTube search quota on
- * tracks that might get skipped anyway.
+ * Returns { resource, cleanup } — cleanup() must be called once this
+ * track finishes, errors, or is skipped, so that a yt-dlp child process
+ * spawned for it doesn't linger in the background.
+ *
+ * SoundCloud tracks stream directly through play-dl (unaffected by the
+ * YouTube-specific breakage this bot has been fighting). Everything else
+ * — direct YouTube links, and YouTube matches found for Spotify/Apple
+ * Music tracks (url === null, resolved here via searchYouTube) — streams
+ * through yt-dlp, which gets patched against YouTube's changes far more
+ * quickly than the old play-dl-based approach did.
  */
 async function createResourceForTrack(track) {
   let playUrl = track.url;
@@ -24,12 +29,26 @@ async function createResourceForTrack(track) {
     if (!track.duration) track.duration = results[0].duration;
   }
 
-  const stream = await play.stream(playUrl);
+  if (track.source === 'soundcloud') {
+    const stream = await play.stream(playUrl);
+    const resource = createAudioResource(stream.stream, {
+      inputType: stream.type,
+      inlineVolume: true,
+    });
+    return { resource, cleanup: () => {} };
+  }
 
-  return createAudioResource(stream.stream, {
-    inputType: stream.type,
+  const child = spawnAudioStream(playUrl);
+  const resource = createAudioResource(child.stdout, {
+    inputType: StreamType.Arbitrary,
     inlineVolume: true,
   });
+
+  const cleanup = () => {
+    if (!child.killed) child.kill('SIGKILL');
+  };
+
+  return { resource, cleanup };
 }
 
 module.exports = { createResourceForTrack };
