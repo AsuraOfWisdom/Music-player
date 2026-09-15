@@ -36,8 +36,9 @@ function ensureCookiesFile() {
   return cookiesFilePath;
 }
 
-function baseArgs() {
-  const args = ['--no-warnings', '--no-playlist'];
+function baseArgs({ noPlaylist = false } = {}) {
+  const args = ['--no-warnings'];
+  if (noPlaylist) args.push('--no-playlist');
   const cookiesPath = ensureCookiesFile();
   if (cookiesPath) args.push('--cookies', cookiesPath);
   return args;
@@ -46,10 +47,16 @@ function baseArgs() {
 /**
  * Run yt-dlp with --dump-json against a URL or a "ytsearchN:query" target
  * and return the parsed JSON object(s) it printed (one per line).
+ *
+ * Pass { noPlaylist: true } for anything that should always resolve to a
+ * single item (a specific video/track, or a search). Leave it false for
+ * a URL that might itself be a playlist/set the caller wants expanded
+ * (e.g. a SoundCloud "sets" link) — yt-dlp naturally prints one JSON
+ * object per entry in that case.
  */
-function dumpJson(target) {
+function dumpJson(target, opts = {}) {
   return new Promise((resolve, reject) => {
-    const args = [...baseArgs(), '--dump-json', target];
+    const args = [...baseArgs(opts), '--dump-json', target];
     const child = spawn(YTDLP_BIN, args);
 
     let stdout = '';
@@ -85,7 +92,9 @@ function dumpJson(target) {
  * kill() once the track ends/skips so the process doesn't linger.
  */
 function spawnAudioStream(url) {
-  const args = [...baseArgs(), '-f', 'bestaudio[protocol!=m3u8_native]/bestaudio', '-o', '-', url];
+  // Always a single, already-resolved track URL by this point, regardless
+  // of source, so playlist expansion is never wanted here.
+  const args = [...baseArgs({ noPlaylist: true }), '-f', 'bestaudio[protocol!=m3u8_native]/bestaudio', '-o', '-', url];
   const child = spawn(YTDLP_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
   let stderrTail = '';
