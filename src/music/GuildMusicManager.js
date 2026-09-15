@@ -1,0 +1,163 @@
+const {
+  joinVoiceChannel,
+  createAudioPlayer,
+  AudioPlayerStatus,
+  VoiceConnectionStatus,
+  entersState,
+} = require('@discordjs/voice');
+const { createResourceForTrack } = require('./player');
+
+const LOOP_MODES = { OFF: 'off', TRACK: 'track', QUEUE: 'queue' };
+const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // leave voice after 5 min of nothing to play
+
+const managers = new Map();
+
+class GuildMusicManager {
+  constructor(guildId) {
+    this.guildId = guildId;
+    this.queue = [];
+    this.currentTrack = null;
+    this.connection = null;
+    this.player = createAudioPlayer();
+    this.textChannel = null;
+    this.loopMode = LOOP_MODES.OFF;
+    this.volume = 100;
+    this.idleTimer = null;
+
+    this.player.on(AudioPlayerStatus.Idle, () => this._playNext());
+    this.player.on('error', (error) => {
+      console.error(`[music:${this.guildId}] player error:`, error.message);
+      this._playNext();
+    });
+  }
+
+  connect(voiceChannel) {
+    this.connection = joinVoiceChannel({
+      channelId: voiceChannel.id,
+      guildId: voiceChannel.guild.id,
+      adapterCreator: voiceChannel.guild.voiceAdapterCreator,
+      selfDeaf: true,
+    });
+    this.connection.subscribe(this.player);
+
+    this.connection.on(VoiceConnectionStatus.Disconnected, async () => {
+      try {
+        // A brief network hiccup looks the same as being kicked; give it
+        // a few seconds to reconnect before tearing everything down.
+        await Promise.race([
+          entersState(this.connection, VoiceConnectionStatus.Signalling, 5_000),
+          entersState(this.connection, VoiceConnectionStatus.Connecting, 5_000),
+        ]);
+      } catch {
+        this.destroy();
+      }
+    });
+  }
+
+  enqueue(tracks, requestedBy) {
+    for (const t of tracks) this.queue.push({ ...t, requestedBy });
+    this._clearIdleTimer();
+
+    if (!this.currentTrack && this.player.state.status !== AudioPlayerStatus.Playing) {
+      this._playNext();
+    }
+  }
+
+  async _playNext() {
+    if (this.loopMode === LOOP_MODES.TRACK && this.currentTrack) {
+      this.queue.unshift(this.currentTrack);
+    } else if (this.loopMode === LOOP_MODES.QUEUE && this.currentTrack) {
+      this.queue.push(this.currentTrack);
+    }
+
+    const next = this.queue.shift();
+    if (!next) {
+      this.currentTrack = null;
+      this._startIdleTimer();
+      return;
+    }
+
+    try {
+      const resource = await createResourceForTrack(next);
+      resource.volume?.setVolume(this.volume / 100);
+      this.currentTrack = next;
+      this.player.play(resource);
+      this._announce(`Now playing: **${next.title}**`);
+    } catch (err) {
+      console.error(`[music:${this.guildId}] failed to play "${next.title}":`, err.message);
+      this._announce(`Skipping **${next.title}** — couldn't load it (${err.message}).`);
+      this._playNext();
+    }
+  }
+
+  _announce(message) {
+    if (this.textChannel) {
+      this.textChannel.send(message).catch(() => {});
+    }
+  }
+
+  skip() {
+    // Force-stopping the player fires the Idle handler, which advances the queue.
+    this.player.stop(true);
+  }
+
+  stop() {
+    this.queue = [];
+    this.loopMode = LOOP_MODES.OFF;
+    this.player.stop(true);
+  }
+
+  pause() {
+    return this.player.pause();
+  }
+
+  resume() {
+    return this.player.unpause();
+  }
+
+  setVolume(vol) {
+    this.volume = vol;
+    const resource = this.player.state.resource;
+    if (resource?.volume) resource.volume.setVolume(vol / 100);
+  }
+
+  setLoop(mode) {
+    this.loopMode = mode;
+  }
+
+  _startIdleTimer() {
+    this._clearIdleTimer();
+    this.idleTimer = setTimeout(() => this.destroy(), IDLE_TIMEOUT_MS);
+  }
+
+  _clearIdleTimer() {
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer);
+      this.idleTimer = null;
+    }
+  }
+
+  destroy() {
+    this._clearIdleTimer();
+    this.queue = [];
+    this.currentTrack = null;
+    try {
+      this.player.stop(true);
+      this.connection?.destroy();
+    } catch {
+      // connection may already be gone
+    }
+    managers.delete(this.guildId);
+  }
+}
+
+function getManager(guildId) {
+  let manager = managers.get(guildId);
+  if (!manager) {
+    manager = new GuildMusicManager(guildId);
+    managers.set(guildId, manager);
+  }
+  return manager;
+}
+
+module.exports = { getManager, LOOP_MODES };
