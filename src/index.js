@@ -3,6 +3,7 @@ const path = require('path');
 const { Client, GatewayIntentBits, Collection, REST, Routes } = require('discord.js');
 const play = require('play-dl');
 const config = require('./config');
+const { ensureCookiesFile } = require('./music/ytdlp');
 
 if (!config.token || !config.clientId) {
   console.error('Missing DISCORD_TOKEN or CLIENT_ID — copy .env.example to .env and fill it in.');
@@ -11,13 +12,13 @@ if (!config.token || !config.clientId) {
 
 // Cloud hosts (Railway, AWS, etc.) frequently get "Sign in to confirm you're
 // not a bot" from YouTube because the request looks anonymous/automated.
-// Setting a real logged-in session cookie fixes this for play-dl. See the
-// README's Troubleshooting section for how to get this value.
-if (config.youtubeCookie) {
-  play.setToken({ youtube: { cookie: config.youtubeCookie } });
-  console.log('YouTube cookie configured.');
+// Writing a real logged-in session's cookies to disk for yt-dlp to use
+// fixes this. See the README's Troubleshooting section for how to get
+// this value.
+if (ensureCookiesFile()) {
+  console.log('YouTube cookies file configured for yt-dlp.');
 } else {
-  console.warn('No YOUTUBE_COOKIE set — YouTube playback may fail with "Sign in to confirm you\'re not a bot" on cloud hosts.');
+  console.warn('No YOUTUBE_COOKIES_B64 set — YouTube playback may fail with "Sign in to confirm you\'re not a bot" on cloud hosts.');
 }
 
 const client = new Client({
