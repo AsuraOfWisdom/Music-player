@@ -1,19 +1,27 @@
-const play = require('play-dl');
+const { dumpJson } = require('../ytdlp');
+
+function toTrack(info) {
+  const thumbnails = info.thumbnails;
+  const thumbnail = Array.isArray(thumbnails) && thumbnails.length
+    ? thumbnails[thumbnails.length - 1].url
+    : info.thumbnail;
+
+  return {
+    title: info.title,
+    url: info.webpage_url || info.original_url || info.url,
+    duration: info.duration ? Math.round(info.duration) : null,
+    thumbnail,
+    source: 'youtube',
+  };
+}
 
 /**
- * Resolve a direct YouTube video URL into a track object.
+ * Resolve a direct YouTube video URL into a track object, via yt-dlp.
  */
 async function resolveYouTube(url) {
-  const info = await play.video_basic_info(url);
-  const d = info.video_details;
-
-  return [{
-    title: d.title,
-    url: d.url,
-    duration: d.durationInSec,
-    thumbnail: d.thumbnails?.[0]?.url,
-    source: 'youtube',
-  }];
+  const [info] = await dumpJson(url);
+  if (!info) throw new Error('Could not read that YouTube video.');
+  return [toTrack(info)];
 }
 
 /**
@@ -22,15 +30,8 @@ async function resolveYouTube(url) {
  * match for tracks that came from Spotify/Apple Music (metadata only).
  */
 async function searchYouTube(query, limit = 1) {
-  const results = await play.search(query, { source: { youtube: 'video' }, limit });
-
-  return results.map((d) => ({
-    title: d.title,
-    url: d.url,
-    duration: d.durationInSec,
-    thumbnail: d.thumbnails?.[0]?.url,
-    source: 'youtube',
-  }));
+  const results = await dumpJson(`ytsearch${limit}:${query}`);
+  return results.map(toTrack);
 }
 
 module.exports = { resolveYouTube, searchYouTube };
