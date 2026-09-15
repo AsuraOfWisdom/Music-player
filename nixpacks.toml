@@ -1,6 +1,18 @@
-# Adds system packages the Node app shells out to (yt-dlp for YouTube
-# extraction, ffmpeg as a transcoding fallback) alongside Railway's
-# auto-detected Node.js/npm setup. The '...' keeps the auto-detected
-# packages instead of replacing them.
+# Adds system packages/tools the Node app shells out to, alongside
+# Railway's auto-detected Node.js/npm setup. The '...' keeps the
+# auto-detected packages instead of replacing them.
+#
+# yt-dlp is pulled directly from its own GitHub releases at build time,
+# rather than through nixPkgs, because Railway's Nix package snapshot can
+# lag months behind yt-dlp's own release cadence — and yt-dlp ships fixes
+# for YouTube's anti-bot changes very frequently, so staying current
+# matters here more than it would for most tools.
 [phases.setup]
-nixPkgs = ['...', 'ffmpeg', 'yt-dlp']
+nixPkgs = ['...', 'ffmpeg', 'curl', 'ca-certificates']
+
+[phases.ytdlp]
+cmds = [
+  'curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp',
+  'chmod a+rx /usr/local/bin/yt-dlp',
+]
+dependsOn = ['setup']
