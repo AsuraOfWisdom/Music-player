@@ -26,17 +26,13 @@ async function createResourceForTrack(track) {
     if (!track.duration) track.duration = results[0].duration;
   }
 
-  const child = spawnAudioStream(playUrl);
-  const resource = createAudioResource(child.stdout, {
-    inputType: StreamType.Arbitrary,
+  const { stream, kill } = spawnAudioStream(playUrl);
+  const resource = createAudioResource(stream, {
+    inputType: StreamType.Raw,
     inlineVolume: true,
   });
 
-  const cleanup = () => {
-    if (!child.killed) child.kill('SIGKILL');
-  };
-
-  return { resource, cleanup };
+  return { resource, cleanup: kill };
 }
 
 module.exports = { createResourceForTrack };
