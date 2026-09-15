@@ -87,32 +87,72 @@ function dumpJson(target, opts = {}) {
 }
 
 /**
- * Spawn yt-dlp streaming best-quality audio for a URL straight to stdout.
- * The caller pipes child.stdout into the voice connection and must call
- * kill() once the track ends/skips so the process doesn't linger.
+ * Stream best-quality audio for a URL as raw PCM, ready for
+ * @discordjs/voice's StreamType.Raw.
+ *
+ * yt-dlp downloads the audio and writes it to its own stdout; that gets
+ * piped straight into ffmpeg, which transcodes it to raw 48kHz stereo
+ * PCM on ITS stdout. Going through ffmpeg explicitly (rather than
+ * handing yt-dlp's raw output to @discordjs/voice and asking it to
+ * auto-detect the container/codec) avoids format-detection guesswork
+ * that can silently produce no audio at all.
+ *
+ * Returns { stream, kill } — stream is ffmpeg's stdout; kill() must be
+ * called once the track ends/skips so both child processes actually
+ * exit instead of lingering.
  */
 function spawnAudioStream(url) {
   // Always a single, already-resolved track URL by this point, regardless
   // of source, so playlist expansion is never wanted here.
-  const args = [...baseArgs({ noPlaylist: true }), '-f', 'bestaudio[protocol!=m3u8_native]/bestaudio', '-o', '-', url];
-  const child = spawn(YTDLP_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  const ytArgs = [...baseArgs({ noPlaylist: true }), '-f', 'bestaudio/best', '-o', '-', url];
+  const ytdlp = spawn(YTDLP_BIN, ytArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
 
-  let stderrTail = '';
-  child.stderr.on('data', (chunk) => {
-    stderrTail = (stderrTail + chunk).slice(-4000);
-  });
+  const ffmpegArgs = [
+    '-loglevel', 'error',
+    '-i', 'pipe:0',
+    '-f', 's16le',
+    '-ar', '48000',
+    '-ac', '2',
+    'pipe:1',
+  ];
+  const ffmpeg = spawn('ffmpeg', ffmpegArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
 
-  child.on('error', (err) => {
-    child.stdout.destroy(new Error(`Could not run yt-dlp (is it installed?): ${err.message}`));
-  });
-  child.on('close', (code) => {
+  ytdlp.stdout.pipe(ffmpeg.stdin);
+  // If ffmpeg exits first (e.g. it errored) yt-dlp's write to a closed
+  // pipe would otherwise crash the process with an uncaught EPIPE.
+  ytdlp.stdout.on('error', () => {});
+  ffmpeg.stdin.on('error', () => {});
+
+  let ytdlpStderr = '';
+  ytdlp.stderr.on('data', (chunk) => { ytdlpStderr = (ytdlpStderr + chunk).slice(-4000); });
+  let ffmpegStderr = '';
+  ffmpeg.stderr.on('data', (chunk) => { ffmpegStderr = (ffmpegStderr + chunk).slice(-4000); });
+
+  const fail = (err) => ffmpeg.stdout.destroy(err);
+
+  ytdlp.on('error', (err) => fail(new Error(`Could not run yt-dlp (is it installed?): ${err.message}`)));
+  ffmpeg.on('error', (err) => fail(new Error(`Could not run ffmpeg (is it installed?): ${err.message}`)));
+
+  ytdlp.on('close', (code) => {
     if (code !== 0 && code !== null) {
-      const lastLine = stderrTail.trim().split('\n').filter(Boolean).pop();
-      child.stdout.destroy(new Error(lastLine || `yt-dlp exited with code ${code}`));
+      const lastLine = ytdlpStderr.trim().split('\n').filter(Boolean).pop();
+      fail(new Error(lastLine || `yt-dlp exited with code ${code}`));
+    }
+  });
+  ffmpeg.on('close', (code) => {
+    if (code !== 0 && code !== null) {
+      const lastLine = ffmpegStderr.trim().split('\n').filter(Boolean).pop();
+      fail(new Error(lastLine || `ffmpeg exited with code ${code}`));
     }
   });
 
-  return child;
+  return {
+    stream: ffmpeg.stdout,
+    kill: () => {
+      if (!ytdlp.killed) ytdlp.kill('SIGKILL');
+      if (!ffmpeg.killed) ffmpeg.kill('SIGKILL');
+    },
+  };
 }
 
 module.exports = { dumpJson, spawnAudioStream, ensureCookiesFile };
