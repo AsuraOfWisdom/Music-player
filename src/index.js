@@ -9,6 +9,17 @@ if (!config.token || !config.clientId) {
   process.exit(1);
 }
 
+// Cloud hosts (Railway, AWS, etc.) frequently get "Sign in to confirm you're
+// not a bot" from YouTube because the request looks anonymous/automated.
+// Setting a real logged-in session cookie fixes this for play-dl. See the
+// README's Troubleshooting section for how to get this value.
+if (config.youtubeCookie) {
+  play.setToken({ youtube: { cookie: config.youtubeCookie } });
+  console.log('YouTube cookie configured.');
+} else {
+  console.warn('No YOUTUBE_COOKIE set — YouTube playback may fail with "Sign in to confirm you\'re not a bot" on cloud hosts.');
+}
+
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
 });
