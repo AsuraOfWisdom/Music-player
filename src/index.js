@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { Client, GatewayIntentBits, Collection } = require('discord.js');
+const { Client, GatewayIntentBits, Collection, REST, Routes } = require('discord.js');
 const play = require('play-dl');
 const config = require('./config');
 
@@ -53,4 +53,30 @@ client.on('interactionCreate', async (interaction) => {
   }
 });
 
-client.login(config.token);
+// Registers slash commands with Discord every time the bot boots. This is
+// safe to run on every startup (it's just a full overwrite of the command
+// list — Discord doesn't mind, and it means there's no separate manual
+// "deploy commands" step to remember when running on a host like Railway).
+async function registerCommandsOnBoot() {
+  const commandsData = [...client.commands.values()].map((c) => c.data.toJSON());
+  const rest = new REST().setToken(config.token);
+  const route = config.guildId
+    ? Routes.applicationGuildCommands(config.clientId, config.guildId)
+    : Routes.applicationCommands(config.clientId);
+
+  console.log(
+    `Registering ${commandsData.length} slash command(s)${config.guildId ? ` to guild ${config.guildId}` : ' globally'}...`,
+  );
+  await rest.put(route, { body: commandsData });
+  console.log('Slash commands registered.');
+}
+
+(async () => {
+  try {
+    await registerCommandsOnBoot();
+  } catch (err) {
+    console.error('Failed to register slash commands on startup:', err.message);
+  }
+
+  client.login(config.token);
+})();
