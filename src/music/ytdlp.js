@@ -4,6 +4,14 @@ const path = require('path');
 const { spawn } = require('child_process');
 const config = require('../config');
 
+// The build (see nixpacks.toml) downloads yt-dlp straight from its GitHub
+// releases into /usr/local/bin — call it by that exact path rather than
+// relying on Node's PATH lookup, which didn't find it by name at runtime
+// even though the binary was confirmed present after a successful build.
+// YTDLP_PATH lets that location be overridden if it's ever installed
+// somewhere else.
+const YTDLP_BIN = process.env.YTDLP_PATH || '/usr/local/bin/yt-dlp';
+
 // yt-dlp's --cookies flag wants a real Netscape-format cookies file, not
 // an inline string, so the base64 env var gets decoded to disk once, on
 // first use, and reused for the life of the process.
@@ -42,7 +50,7 @@ function baseArgs() {
 function dumpJson(target) {
   return new Promise((resolve, reject) => {
     const args = [...baseArgs(), '--dump-json', target];
-    const child = spawn('yt-dlp', args);
+    const child = spawn(YTDLP_BIN, args);
 
     let stdout = '';
     let stderr = '';
@@ -78,7 +86,7 @@ function dumpJson(target) {
  */
 function spawnAudioStream(url) {
   const args = [...baseArgs(), '-f', 'bestaudio[protocol!=m3u8_native]/bestaudio', '-o', '-', url];
-  const child = spawn('yt-dlp', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(YTDLP_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
   let stderrTail = '';
   child.stderr.on('data', (chunk) => {
