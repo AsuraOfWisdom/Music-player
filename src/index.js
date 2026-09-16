@@ -69,6 +69,16 @@ async function registerCommandsOnBoot() {
     return;
   }
 
+  // If GUILD_ID wasn't set on some earlier deploy, commands would have been
+  // registered globally back then. Global commands don't go away on their
+  // own just because guild-specific ones are added later - Discord happily
+  // keeps both, which is exactly what shows up as duplicate commands (e.g.
+  // two "/play" entries) in any server that already had the global ones.
+  // Explicitly wiping the global command list here (an empty array = "no
+  // global commands") guarantees only the guild-specific copies remain,
+  // no matter what was registered on a previous deploy.
+  await rest.put(Routes.applicationCommands(config.clientId), { body: [] });
+
   for (const guildId of config.guildIds) {
     console.log(`Registering ${commandsData.length} slash command(s) to guild ${guildId}...`);
     await rest.put(Routes.applicationGuildCommands(config.clientId, guildId), { body: commandsData });
