@@ -26,7 +26,11 @@ async function createResourceForTrack(track) {
     if (!track.duration) track.duration = results[0].duration;
   }
 
-  const { stream, kill } = spawnAudioStream(playUrl);
+  // spawnAudioStream now downloads the track to a temp file before
+  // transcoding (see its comment in ytdlp.js for why), so it's async —
+  // this resolves only once the file is fully downloaded and ffmpeg has
+  // started reading it, not the instant yt-dlp is launched.
+  const { stream, kill } = await spawnAudioStream(playUrl);
   const resource = createAudioResource(stream, {
     inputType: StreamType.Raw,
     inlineVolume: true,
