@@ -28,17 +28,27 @@ module.exports = {
   // merged, not replaced.
   //
   // `tv` is deliberately left out: yt-dlp silently substitutes a
-  // `tv_downgraded` variant for it whenever real cookies are present
-  // (which we always supply), and that variant is currently broken on
-  // YouTube's side ("ERROR: The page needs to be reloaded."). The
-  // trailing -tv_downgraded blocks that substitution from happening even
-  // if some other default pulls `tv` back in.
+  // `tv_downgraded` variant for it whenever real cookies are present,
+  // and that variant is currently broken on YouTube's side ("ERROR: The
+  // page needs to be reloaded."). The trailing -tv_downgraded blocks that
+  // substitution from happening even if some other default pulls `tv`
+  // back in.
+  //
+  // `android_vr` is ALSO deliberately left out now, despite not needing a
+  // PO Token: its downloads (not metadata — the actual file fetch) hit a
+  // separate, unrelated bug where YouTube's CDN 403s the request. A
+  // yt-dlp maintainer confirmed this directly on a GitHub issue: "This is
+  // android_vr; it needs to be completely disabled... so it doesn't get
+  // in the way." Since yt-dlp was preferring it (it doesn't need a token,
+  // so it looks like the "easy" choice) and then failing on the actual
+  // download, explicitly excluding it forces yt-dlp to fall back to
+  // clients that actually complete a download instead.
   //
   // This whole list is a moving target as YouTube keeps closing loopholes
   // and yt-dlp keeps patching around them, so it's an env var rather than
   // hardcoded — adjust YT_PLAYER_CLIENTS on Railway if this stops working
   // again without needing a code change.
-  ytPlayerClients: process.env.YT_PLAYER_CLIENTS || 'web,mweb,web_safari,android_vr,web_embedded,-tv_downgraded',
+  ytPlayerClients: process.env.YT_PLAYER_CLIENTS || 'web,mweb,web_safari,web_embedded,-tv_downgraded,-android_vr',
   // Internal URL of a companion "PO Token provider" service — a small
   // server that mints real YouTube PO Tokens on demand instead of relying
   // on client-name tricks (which YouTube keeps closing off). Deployed as
