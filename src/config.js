@@ -48,13 +48,49 @@ module.exports = {
   // and yt-dlp keeps patching around them, so it's an env var rather than
   // hardcoded — adjust YT_PLAYER_CLIENTS on Railway if this stops working
   // again without needing a code change.
-  ytPlayerClients: process.env.YT_PLAYER_CLIENTS || 'web,mweb,web_safari,web_embedded,-tv_downgraded,-android_vr',
-  // Internal URL of a companion "PO Token provider" service — a small
-  // server that mints real YouTube PO Tokens on demand instead of relying
-  // on client-name tricks (which YouTube keeps closing off). Deployed as
-  // its own Railway service from the brainicism/bgutil-ytdlp-pot-provider
-  // Docker image; set this to that service's internal Railway URL, e.g.
-  // http://bgutil-pot.railway.internal:4416 (see the README). Leave unset
-  // to skip it entirely (falls back to plain client selection above).
+  //
+  // UPDATE (Sept 2026): even with the PO Token provider working and real
+  // tokens being retrieved, `web`/`mweb`/`web_safari` can still return NO
+  // usable URL at all for a given video — YouTube now forces some videos
+  // into a session-based "SABR" streaming mode on those clients regardless
+  // of token validity (yt-dlp tracks this at github.com/yt-dlp/yt-dlp/issues/12482,
+  // still open/unresolved upstream as of this writing; a fully native fix
+  // — a from-scratch SABR downloader — exists only as an experimental,
+  // not-yet-merged yt-dlp pull request, so it isn't something we can
+  // depend on from a plain release binary).
+  //
+  // `android` and `ios` (the native app clients) are added here because
+  // SABR forcing has so far only been reported against the *web-family*
+  // InnerTube clients (web/mweb/web_safari/tv_simply), not the native app
+  // ones — so they're extra chances to get a real format for a video the
+  // web clients refuse to serve outside SABR. Both need a PO Token like
+  // `web` does, which the provider now supplies.
+  //
+  // `web_embedded` was dropped from the default list: it only returns
+  // anything for videos with embedding enabled, which isn't true of every
+  // track, and it wasn't adding coverage SABR-forcing didn't already take
+  // away on the videos we were testing.
+  ytPlayerClients: process.env.YT_PLAYER_CLIENTS || 'web,mweb,web_safari,android,ios,-tv_downgraded,-android_vr',
+  // Extra yt-dlp `youtube:formats=...` extractor-arg value (see the
+  // SABR-forcing note above). `missing_pot` tells yt-dlp to include formats
+  // it would otherwise pre-emptively hide as "likely to fail without a PO
+  // Token" — now that a real token provider is wired up, some of those
+  // hidden formats actually work. It's not a fix for true SABR-forcing (a
+  // format that's hidden for lacking a URL entirely still won't appear),
+  // but it's a free extra chance on any video that isn't fully SABR-locked,
+  // so it stays on unconditionally rather than needing its own env var.
+  ytFormatsArg: 'missing_pot',
+  // URL of a companion "PO Token provider" service — a small server that
+  // mints real YouTube PO Tokens on demand instead of relying on
+  // client-name tricks (which YouTube keeps closing off). Deployed as its
+  // own Railway service from the brainicism/bgutil-ytdlp-pot-provider
+  // Docker image (see the README). Point this at that service's URL —
+  // Railway's internal `<service>.railway.internal` address had a
+  // connectivity issue in testing (its DNS name resolved to an
+  // IPv6-only address while the provider's own HTTP server only listens
+  // on IPv4), so a public Railway domain (Settings → Networking →
+  // Generate Domain), used as a full `https://...` URL, is what's
+  // actually deployed. Leave unset to skip it entirely (falls back to
+  // plain client selection above).
   potProviderUrl: process.env.POT_PROVIDER_URL || null,
 };
