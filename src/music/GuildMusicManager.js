@@ -25,7 +25,18 @@ class GuildMusicManager {
     this.idleTimer = null;
     this._currentCleanup = null; // kills the previous track's yt-dlp process, if any
 
-    this.player.on(AudioPlayerStatus.Idle, () => this._playNext());
+    // Logged unconditionally (not just on error) so the deploy log shows
+    // what actually happened even when nothing throws — e.g. a track that
+    // "plays" but is silent still fires Idle almost immediately once
+    // @discordjs/voice runs out of audio data, which is a useful signal on
+    // its own even with no accompanying error.
+    this.player.on(AudioPlayerStatus.Playing, () => {
+      console.log(`[music:${this.guildId}] player status -> Playing (${this.currentTrack?.title ?? 'unknown track'})`);
+    });
+    this.player.on(AudioPlayerStatus.Idle, () => {
+      console.log(`[music:${this.guildId}] player status -> Idle`);
+      this._playNext();
+    });
     this.player.on('error', (error) => {
       console.error(`[music:${this.guildId}] player error:`, error.message);
       this._playNext();
