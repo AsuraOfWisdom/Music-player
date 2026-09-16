@@ -3,7 +3,15 @@ require('dotenv').config();
 module.exports = {
   token: process.env.DISCORD_TOKEN,
   clientId: process.env.CLIENT_ID,
-  guildId: process.env.GUILD_ID || null,
+  // GUILD_ID can be a single server ID, or several separated by commas
+  // (e.g. "111111111111111111,222222222222222222") to instantly register
+  // slash commands in more than one server at once. Leave unset to
+  // register commands globally instead (works in every server the bot is
+  // in, but Discord can take up to an hour to show new/changed commands).
+  guildIds: (process.env.GUILD_ID || '')
+    .split(',')
+    .map((id) => id.trim())
+    .filter(Boolean),
   spotifyClientId: process.env.SPOTIFY_CLIENT_ID,
   spotifyClientSecret: process.env.SPOTIFY_CLIENT_SECRET,
   // Base64-encoded Netscape-format cookies.txt, used by yt-dlp (see src/music/ytdlp.js).
