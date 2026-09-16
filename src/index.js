@@ -61,14 +61,18 @@ client.on('interactionCreate', async (interaction) => {
 async function registerCommandsOnBoot() {
   const commandsData = [...client.commands.values()].map((c) => c.data.toJSON());
   const rest = new REST().setToken(config.token);
-  const route = config.guildId
-    ? Routes.applicationGuildCommands(config.clientId, config.guildId)
-    : Routes.applicationCommands(config.clientId);
 
-  console.log(
-    `Registering ${commandsData.length} slash command(s)${config.guildId ? ` to guild ${config.guildId}` : ' globally'}...`,
-  );
-  await rest.put(route, { body: commandsData });
+  if (config.guildIds.length === 0) {
+    console.log(`Registering ${commandsData.length} slash command(s) globally...`);
+    await rest.put(Routes.applicationCommands(config.clientId), { body: commandsData });
+    console.log('Slash commands registered.');
+    return;
+  }
+
+  for (const guildId of config.guildIds) {
+    console.log(`Registering ${commandsData.length} slash command(s) to guild ${guildId}...`);
+    await rest.put(Routes.applicationGuildCommands(config.clientId, guildId), { body: commandsData });
+  }
   console.log('Slash commands registered.');
 }
 
