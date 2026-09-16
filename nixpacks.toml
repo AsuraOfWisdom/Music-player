@@ -8,7 +8,7 @@
 # for YouTube's anti-bot changes very frequently, so staying current
 # matters here more than it would for most tools.
 [phases.setup]
-nixPkgs = ['...', 'ffmpeg', 'curl']
+nixPkgs = ['...', 'ffmpeg', 'curl', 'unzip']
 
 [phases.ytdlp]
 cmds = [
@@ -16,3 +16,22 @@ cmds = [
   'chmod a+rx /usr/local/bin/yt-dlp',
 ]
 dependsOn = ['setup']
+
+# YouTube's PO Token requirement eventually blocks every "pretend to be a
+# client that doesn't need one" trick (see src/config.js's ytPlayerClients
+# comment). The durable fix is a real PO Token provider: this plugin lets
+# yt-dlp fetch tokens from a companion server (deployed as its own Railway
+# service running the brainicism/bgutil-ytdlp-pot-provider Docker image —
+# see the README) instead of guessing at client names. Installed by
+# unzipping the plugin release straight into a folder yt-dlp is told to
+# scan via --plugin-dirs (see src/music/ytdlp.js) — confirmed by inspecting
+# the zip that it extracts to <dir>/yt_dlp_plugins/... directly, no extra
+# nesting, so this dir is exactly the --plugin-dirs value.
+[phases.potplugin]
+cmds = [
+  'mkdir -p /opt/yt-dlp-plugins',
+  'curl -L https://github.com/Brainicism/bgutil-ytdlp-pot-provider/releases/latest/download/bgutil-ytdlp-pot-provider.zip -o /tmp/bgutil-plugin.zip',
+  'unzip -o /tmp/bgutil-plugin.zip -d /opt/yt-dlp-plugins',
+  'rm /tmp/bgutil-plugin.zip',
+]
+dependsOn = ['ytdlp']
