@@ -172,22 +172,52 @@ function spawnAudioStream(url) {
   let ffmpegStderr = '';
   ffmpeg.stderr.on('data', (chunk) => { ffmpegStderr = (ffmpegStderr + chunk).slice(-4000); });
 
+  // Track how many bytes actually flow through each stage. A "successful"
+  // (exit code 0) yt-dlp run that moves almost no bytes is just as broken
+  // as one that errors outright — it's what a throttled or bogus-but-200
+  // format URL looks like (seen from some non-web player clients like
+  // android/ios): yt-dlp gets a response and considers the download done,
+  // but the file is empty or a few bytes of garbage, so nothing ever
+  // reaches ffmpeg or Discord. That failure mode produces NO error and
+  // (before this) NO log output at all — which is exactly what "bot says
+  // Now Playing, no sound, nothing in the deploy log" looks like — so it's
+  // measured and logged explicitly here instead of only reacting to a
+  // nonzero exit code.
+  let ytdlpBytes = 0;
+  ytdlp.stdout.on('data', (chunk) => { ytdlpBytes += chunk.length; });
+  let ffmpegBytes = 0;
+  ffmpeg.stdout.on('data', (chunk) => { ffmpegBytes += chunk.length; });
+
   const fail = (err) => ffmpeg.stdout.destroy(err);
 
   ytdlp.on('error', (err) => fail(new Error(`Could not run yt-dlp (is it installed?): ${err.message}`)));
   ffmpeg.on('error', (err) => fail(new Error(`Could not run ffmpeg (is it installed?): ${err.message}`)));
 
+  // A real track is at minimum tens of KB of compressed audio. Anything
+  // under this, even on a clean exit, means the "download" was effectively
+  // empty.
+  const MIN_SANE_YTDLP_BYTES = 8000;
+
   ytdlp.on('close', (code) => {
-    if (code !== 0 && code !== null) {
+    const emptyDownload = code === 0 && ytdlpBytes < MIN_SANE_YTDLP_BYTES;
+    // Always logged (not just on failure) so a silent/empty "success" shows
+    // up in the deploy log instead of leaving nothing to diagnose from.
+    console.log(`[yt-dlp] audio download for "${url}" finished: exit=${code}, bytes=${ytdlpBytes}${emptyDownload ? ' — SUSPICIOUSLY LOW, treating as a failure' : ''}`);
+    if (code !== 0 || emptyDownload) {
       // Logged in full to the Railway deploy log (see the matching comment
       // in dumpJson above) — this is where PO Token/plugin problems during
       // the actual download step (as opposed to metadata lookup) show up.
       console.error(`[yt-dlp] full output for "${url}":\n${ytdlpStderr.trim()}`);
+    }
+    if (code !== 0 && code !== null) {
       const lastLine = ytdlpStderr.trim().split('\n').filter(Boolean).pop();
       fail(new Error(lastLine || `yt-dlp exited with code ${code}`));
+    } else if (emptyDownload) {
+      fail(new Error('yt-dlp produced an empty/near-empty audio file (likely an unusable format from the selected client)'));
     }
   });
   ffmpeg.on('close', (code) => {
+    console.log(`[ffmpeg] transcode for "${url}" finished: exit=${code}, pcm-bytes=${ffmpegBytes}`);
     if (code !== 0 && code !== null) {
       const lastLine = ffmpegStderr.trim().split('\n').filter(Boolean).pop();
       fail(new Error(lastLine || `ffmpeg exited with code ${code}`));
