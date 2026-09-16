@@ -1,4 +1,5 @@
 const fs = require('fs');
+const fsp = require('fs/promises');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
@@ -127,41 +128,44 @@ function dumpJson(target, opts = {}) {
 }
 
 /**
- * Stream best-quality audio for a URL as raw PCM, ready for
- * @discordjs/voice's StreamType.Raw.
+ * Get best-quality audio for a URL playable via @discordjs/voice's
+ * StreamType.Raw. Returns a Promise for { stream, kill }.
  *
- * yt-dlp downloads the audio and writes it to its own stdout; that gets
- * piped straight into ffmpeg, which transcodes it to raw 48kHz stereo
- * PCM on ITS stdout. Going through ffmpeg explicitly (rather than
- * handing yt-dlp's raw output to @discordjs/voice and asking it to
- * auto-detect the container/codec) avoids format-detection guesswork
- * that can silently produce no audio at all.
+ * CHANGED (Sept 2026): this used to pipe yt-dlp's stdout straight into
+ * ffmpeg's stdin live, so playback could start the instant bytes arrived.
+ * That's the theoretically faster design, but it turned out to be exactly
+ * why some tracks played "Now Playing" with total silence and NOTHING in
+ * the log: certain formats (seen from the android/ios player clients,
+ * fragmented DASH audio, etc.) don't reassemble correctly when streamed
+ * straight through a pipe — yt-dlp can exit 0 having "succeeded" while
+ * effectively no usable audio bytes ever cross the pipe. Writing to stdout
+ * also quietly disables some of yt-dlp's own postprocessing/fragment
+ * handling, since a pipe isn't seekable the way a real file is.
  *
- * Returns { stream, kill } — stream is ffmpeg's stdout; kill() must be
- * called once the track ends/skips so both child processes actually
- * exit instead of lingering.
+ * This mirrors the approach several other, more battle-tested Discord
+ * music bots use (e.g. umutxyp/MusicBot pre-downloads every track to disk
+ * before playing it, specifically to avoid this class of bug): download
+ * the full track to a real temp file first with yt-dlp, THEN transcode
+ * that completed file to raw PCM with ffmpeg. It costs a little startup
+ * latency (has to wait for the whole file, typically a few seconds for a
+ * song), but sidesteps an entire category of "silently broken pipe"
+ * failures, and lets yt-dlp's normal, well-tested file-based download path
+ * do the work instead of the less-common stdout path.
  */
-function spawnAudioStream(url) {
+async function spawnAudioStream(url) {
+  // A unique temp directory per track (rather than a unique filename) so
+  // the real output file — whatever extension yt-dlp picks (webm/m4a/opus/
+  // mp4 all happen depending on the client/format used) — can just be
+  // found afterward by listing the directory, and cleanup is "delete this
+  // one directory" rather than tracking an exact filename.
+  const workDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'ytdlp-track-'));
+  const cleanupWorkDir = () => { fsp.rm(workDir, { recursive: true, force: true }).catch(() => {}); };
+
   // Always a single, already-resolved track URL by this point, regardless
   // of source, so playlist expansion is never wanted here.
-  const ytArgs = [...baseArgs({ noPlaylist: true }), '-f', 'bestaudio/best', '-o', '-', url];
-  const ytdlp = spawn(YTDLP_BIN, ytArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
-
-  const ffmpegArgs = [
-    '-loglevel', 'error',
-    '-i', 'pipe:0',
-    '-f', 's16le',
-    '-ar', '48000',
-    '-ac', '2',
-    'pipe:1',
-  ];
-  const ffmpeg = spawn('ffmpeg', ffmpegArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
-
-  ytdlp.stdout.pipe(ffmpeg.stdin);
-  // If ffmpeg exits first (e.g. it errored) yt-dlp's write to a closed
-  // pipe would otherwise crash the process with an uncaught EPIPE.
-  ytdlp.stdout.on('error', () => {});
-  ffmpeg.stdin.on('error', () => {});
+  const outputTemplate = path.join(workDir, 'audio.%(ext)s');
+  const ytArgs = [...baseArgs({ noPlaylist: true }), '-f', 'bestaudio/best', '-o', outputTemplate, url];
+  const ytdlp = spawn(YTDLP_BIN, ytArgs, { stdio: ['ignore', 'ignore', 'pipe'] });
 
   // Bumped from 4000 to 16000 chars — --verbose (see baseArgs) means a lot
   // more diagnostic output per track (client attempts, plugin/PO Token
@@ -169,68 +173,95 @@ function spawnAudioStream(url) {
   // fails to download.
   let ytdlpStderr = '';
   ytdlp.stderr.on('data', (chunk) => { ytdlpStderr = (ytdlpStderr + chunk).slice(-16000); });
-  let ffmpegStderr = '';
-  ffmpeg.stderr.on('data', (chunk) => { ffmpegStderr = (ffmpegStderr + chunk).slice(-4000); });
-
-  // Track how many bytes actually flow through each stage. A "successful"
-  // (exit code 0) yt-dlp run that moves almost no bytes is just as broken
-  // as one that errors outright — it's what a throttled or bogus-but-200
-  // format URL looks like (seen from some non-web player clients like
-  // android/ios): yt-dlp gets a response and considers the download done,
-  // but the file is empty or a few bytes of garbage, so nothing ever
-  // reaches ffmpeg or Discord. That failure mode produces NO error and
-  // (before this) NO log output at all — which is exactly what "bot says
-  // Now Playing, no sound, nothing in the deploy log" looks like — so it's
-  // measured and logged explicitly here instead of only reacting to a
-  // nonzero exit code.
-  let ytdlpBytes = 0;
-  ytdlp.stdout.on('data', (chunk) => { ytdlpBytes += chunk.length; });
-  let ffmpegBytes = 0;
-  ffmpeg.stdout.on('data', (chunk) => { ffmpegBytes += chunk.length; });
-
-  const fail = (err) => ffmpeg.stdout.destroy(err);
-
-  ytdlp.on('error', (err) => fail(new Error(`Could not run yt-dlp (is it installed?): ${err.message}`)));
-  ffmpeg.on('error', (err) => fail(new Error(`Could not run ffmpeg (is it installed?): ${err.message}`)));
 
   // A real track is at minimum tens of KB of compressed audio. Anything
   // under this, even on a clean exit, means the "download" was effectively
-  // empty.
-  const MIN_SANE_YTDLP_BYTES = 8000;
+  // empty — the same silent-success failure mode described above, just
+  // caught by checking the file yt-dlp produced instead of bytes in a pipe.
+  const MIN_SANE_BYTES = 8000;
 
-  ytdlp.on('close', (code) => {
-    const emptyDownload = code === 0 && ytdlpBytes < MIN_SANE_YTDLP_BYTES;
-    // Always logged (not just on failure) so a silent/empty "success" shows
-    // up in the deploy log instead of leaving nothing to diagnose from.
-    console.log(`[yt-dlp] audio download for "${url}" finished: exit=${code}, bytes=${ytdlpBytes}${emptyDownload ? ' — SUSPICIOUSLY LOW, treating as a failure' : ''}`);
-    if (code !== 0 || emptyDownload) {
-      // Logged in full to the Railway deploy log (see the matching comment
-      // in dumpJson above) — this is where PO Token/plugin problems during
-      // the actual download step (as opposed to metadata lookup) show up.
-      console.error(`[yt-dlp] full output for "${url}":\n${ytdlpStderr.trim()}`);
-    }
-    if (code !== 0 && code !== null) {
-      const lastLine = ytdlpStderr.trim().split('\n').filter(Boolean).pop();
-      fail(new Error(lastLine || `yt-dlp exited with code ${code}`));
-    } else if (emptyDownload) {
-      fail(new Error('yt-dlp produced an empty/near-empty audio file (likely an unusable format from the selected client)'));
-    }
-  });
-  ffmpeg.on('close', (code) => {
-    console.log(`[ffmpeg] transcode for "${url}" finished: exit=${code}, pcm-bytes=${ffmpegBytes}`);
-    if (code !== 0 && code !== null) {
-      const lastLine = ffmpegStderr.trim().split('\n').filter(Boolean).pop();
-      fail(new Error(lastLine || `ffmpeg exited with code ${code}`));
-    }
-  });
+  return new Promise((resolve, reject) => {
+    ytdlp.on('error', (err) => {
+      cleanupWorkDir();
+      reject(new Error(`Could not run yt-dlp (is it installed?): ${err.message}`));
+    });
 
-  return {
-    stream: ffmpeg.stdout,
-    kill: () => {
-      if (!ytdlp.killed) ytdlp.kill('SIGKILL');
-      if (!ffmpeg.killed) ffmpeg.kill('SIGKILL');
-    },
-  };
+    ytdlp.on('close', async (code) => {
+      if (code !== 0 && code !== null) {
+        // Logged in full to the Railway deploy log (see the matching
+        // comment in dumpJson above) — this is where PO Token/plugin
+        // problems during the actual download step (as opposed to
+        // metadata lookup) show up.
+        console.error(`[yt-dlp] full output for "${url}":\n${ytdlpStderr.trim()}`);
+        const lastLine = ytdlpStderr.trim().split('\n').filter(Boolean).pop();
+        cleanupWorkDir();
+        return reject(new Error(lastLine || `yt-dlp exited with code ${code}`));
+      }
+
+      let files = [];
+      try {
+        files = await fsp.readdir(workDir);
+      } catch (err) {
+        cleanupWorkDir();
+        return reject(new Error(`Could not read yt-dlp's output directory: ${err.message}`));
+      }
+
+      let sizeBytes = 0;
+      if (files.length) {
+        try {
+          sizeBytes = (await fsp.stat(path.join(workDir, files[0]))).size;
+        } catch { /* falls through to the size check below */ }
+      }
+
+      // Always logged (not just on failure) so a silent/empty "success"
+      // shows up in the deploy log instead of leaving nothing to diagnose
+      // from.
+      console.log(`[yt-dlp] audio download for "${url}" finished: file=${files[0] || '(none)'}, bytes=${sizeBytes}`);
+
+      if (!files.length || sizeBytes < MIN_SANE_BYTES) {
+        console.error(`[yt-dlp] full output for "${url}":\n${ytdlpStderr.trim()}`);
+        cleanupWorkDir();
+        return reject(new Error('yt-dlp produced an empty/near-empty audio file (likely an unusable format from the selected client)'));
+      }
+
+      const downloadedPath = path.join(workDir, files[0]);
+      const ffmpegArgs = [
+        '-loglevel', 'error',
+        '-i', downloadedPath,
+        '-f', 's16le',
+        '-ar', '48000',
+        '-ac', '2',
+        'pipe:1',
+      ];
+      const ffmpeg = spawn('ffmpeg', ffmpegArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+
+      let ffmpegStderr = '';
+      ffmpeg.stderr.on('data', (chunk) => { ffmpegStderr = (ffmpegStderr + chunk).slice(-4000); });
+      let ffmpegBytes = 0;
+      ffmpeg.stdout.on('data', (chunk) => { ffmpegBytes += chunk.length; });
+
+      const fail = (err) => ffmpeg.stdout.destroy(err);
+      ffmpeg.on('error', (err) => fail(new Error(`Could not run ffmpeg (is it installed?): ${err.message}`)));
+      ffmpeg.on('close', (fcode) => {
+        console.log(`[ffmpeg] transcode for "${url}" finished: exit=${fcode}, pcm-bytes=${ffmpegBytes}`);
+        if (fcode !== 0 && fcode !== null) {
+          const lastLine = ffmpegStderr.trim().split('\n').filter(Boolean).pop();
+          fail(new Error(lastLine || `ffmpeg exited with code ${fcode}`));
+        }
+        // Safe to delete the source file once ffmpeg is done reading it,
+        // whether that's a clean finish or an error.
+        cleanupWorkDir();
+      });
+
+      resolve({
+        stream: ffmpeg.stdout,
+        kill: () => {
+          if (!ffmpeg.killed) ffmpeg.kill('SIGKILL');
+          cleanupWorkDir();
+        },
+      });
+    });
+  });
 }
 
 module.exports = { dumpJson, spawnAudioStream, ensureCookiesFile };
