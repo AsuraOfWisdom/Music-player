@@ -26,7 +26,8 @@ module.exports = {
     try {
       tracks = await resolveQuery(query);
     } catch (err) {
-      return interaction.editReply(`Couldn't resolve that: ${err.message}`);
+      const reason = typeof err?.message === 'string' && err.message ? err.message : 'An unexpected error occurred.';
+      return interaction.editReply(`Couldn't resolve that: ${reason}`);
     }
 
     if (!tracks.length) {
