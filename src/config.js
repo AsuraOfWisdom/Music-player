@@ -76,11 +76,20 @@ module.exports = {
   // worked without cookies — YouTube's unauthenticated-request wall got
   // tighter again. No client-name trick gets past that, only real cookies
   // from a logged-in session do (see youtubeCookiesB64 above), so cookies
-  // are back in the deployed config. `tv` is added back to the list to
-  // take advantage of that: it doesn't need a PO Token at all, and its
-  // only real caveat (formats come back DRM'd) specifically goes away once
-  // cookies are present — which they are again now.
-  ytPlayerClients: process.env.YT_PLAYER_CLIENTS || 'tv,web,mweb,web_safari,android,ios,-tv_downgraded,-android_vr',
+  // are back in the deployed config.
+  //
+  // UPDATE (Sept 2026, yet again): yt-dlp tries clients in the order
+  // they're listed here, and now that things are actually working end to
+  // end, deploy logs consistently show `tv` coming back UNPLAYABLE before
+  // `web`/`mweb` succeed — so every single track was paying for one wasted
+  // request (a full webpage + player config + player API round trip) for a
+  // client that wasn't going to work anyway. `tv` is moved to the back of
+  // the list instead of removed (it's still worth trying as a last resort,
+  // and this is exactly the kind of thing that flips back to working with
+  // no warning), and the clients actually succeeding right now go first —
+  // this is a real, if modest, chunk of the time between songs, alongside
+  // the bigger prefetch-the-next-track change in GuildMusicManager.js.
+  ytPlayerClients: process.env.YT_PLAYER_CLIENTS || 'web,mweb,web_safari,android,ios,tv,-tv_downgraded,-android_vr',
   // Extra yt-dlp `youtube:formats=...` extractor-arg value (see the
   // SABR-forcing note above). `missing_pot` tells yt-dlp to include formats
   // it would otherwise pre-emptively hide as "likely to fail without a PO
