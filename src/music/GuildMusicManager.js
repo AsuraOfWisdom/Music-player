@@ -49,9 +49,26 @@ class GuildMusicManager {
       guildId: voiceChannel.guild.id,
       adapterCreator: voiceChannel.guild.voiceAdapterCreator,
       selfDeaf: true,
+      // Turns on @discordjs/voice's own internal 'debug' event, which
+      // includes a '[NW]' (networking)-prefixed play-by-play of the actual
+      // UDP layer: socket creation, the IP discovery packet being sent,
+      // whether/when a response comes back, keepalives, etc. Plain
+      // VoiceConnectionStatus transitions (logged below) only show the
+      // high-level state, not what's actually happening on the wire — and
+      // since a prior test showed the connection stuck at "connecting" for
+      // both YouTube and SoundCloud audio alike, with no thrown error, the
+      // failure is somewhere inside that UDP handshake. This is the only
+      // way to see whether the discovery packet is even being sent, versus
+      // sent-but-no-response (pointing at Railway's outbound UDP/NAT),
+      // versus something else entirely.
+      debug: true,
     });
     const subscription = this.connection.subscribe(this.player);
     console.log(`[music:${this.guildId}] connection.subscribe() ${subscription ? 'succeeded' : 'FAILED (returned undefined)'}`);
+
+    this.connection.on('debug', (message) => {
+      console.log(`[music:${this.guildId}] voice debug: ${message}`);
+    });
 
     // Logs every stage of the connection handshake, including the UDP
     // "IP discovery" step that establishes where to actually send audio
