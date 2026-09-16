@@ -1,3 +1,4 @@
+const util = require('util');
 const SpotifyWebApi = require('spotify-web-api-node');
 const config = require('../../config');
 
@@ -24,7 +25,15 @@ let tokenExpiresAt = 0;
  * diagnosable from the Railway deploy logs instead of being swallowed.
  */
 function describeSpotifyError(err, context) {
-  console.error(`[spotify] ${context} failed:`, err?.body ?? err);
+  // Log everything we can see on the error object - statusCode and headers
+  // matter as much as body here, since an empty `{}` body (no `error` key
+  // at all) could mean a 404 for a bad id, a 401/403 permissions problem,
+  // or Spotify/a proxy blocking the request with a non-JSON response that
+  // never reached the `body` shape the library expects.
+  console.error(
+    `[spotify] ${context} failed: statusCode=${err?.statusCode} name=${err?.name} message=${err?.message}`,
+  );
+  console.error(`[spotify] ${context} full error object:`, util.inspect(err, { depth: 6 }));
 
   const body = err?.body;
   if (body?.error_description) {
