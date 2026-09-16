@@ -70,7 +70,17 @@ module.exports = {
   // anything for videos with embedding enabled, which isn't true of every
   // track, and it wasn't adding coverage SABR-forcing didn't already take
   // away on the videos we were testing.
-  ytPlayerClients: process.env.YT_PLAYER_CLIENTS || 'web,mweb,web_safari,android,ios,-tv_downgraded,-android_vr',
+  //
+  // UPDATE (Sept 2026, again): every client above came back LOGIN_REQUIRED
+  // ("Sign in to confirm you're not a bot") for a video that previously
+  // worked without cookies — YouTube's unauthenticated-request wall got
+  // tighter again. No client-name trick gets past that, only real cookies
+  // from a logged-in session do (see youtubeCookiesB64 above), so cookies
+  // are back in the deployed config. `tv` is added back to the list to
+  // take advantage of that: it doesn't need a PO Token at all, and its
+  // only real caveat (formats come back DRM'd) specifically goes away once
+  // cookies are present — which they are again now.
+  ytPlayerClients: process.env.YT_PLAYER_CLIENTS || 'tv,web,mweb,web_safari,android,ios,-tv_downgraded,-android_vr',
   // Extra yt-dlp `youtube:formats=...` extractor-arg value (see the
   // SABR-forcing note above). `missing_pot` tells yt-dlp to include formats
   // it would otherwise pre-emptively hide as "likely to fail without a PO
