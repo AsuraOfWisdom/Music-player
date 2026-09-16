@@ -1,125 +1,64 @@
-const util = require('util');
-const SpotifyWebApi = require('spotify-web-api-node');
-const config = require('../../config');
-
-const spotifyApi = new SpotifyWebApi({
-  clientId: config.spotifyClientId,
-  clientSecret: config.spotifyClientSecret,
-});
-
-let tokenExpiresAt = 0;
-
 /**
- * spotify-web-api-node builds a proper string `.message` for the two
- * documented error shapes (bad credentials, bad track/album id) - but if
- * Spotify ever responds with a body that doesn't have the `error` key it
- * expects (an empty `{}` on a 429 rate-limit, a gateway/CDN error page that
- * still gets parsed as JSON, etc.), it falls back to using the raw response
- * body object AS the message. `Error`/`Error`-subclass constructors coerce
- * a non-string message with JS's default object-to-string conversion,
- * which is literally the string "[object Object]" - that's exactly what
- * was showing up in Discord instead of a real error.
+ * Spotify gives no way to stream audio through a third-party bot - like the
+ * other resolvers here, this only reads metadata and hands it to the
+ * player, which finds a playable match on YouTube by title/artist.
  *
- * This pulls a readable string out of whatever shape actually comes back,
- * and logs the raw error so a genuinely new failure mode is still
- * diagnosable from the Railway deploy logs instead of being swallowed.
+ * IMPORTANT: this deliberately does NOT use Spotify's official Web API
+ * (the `spotify-web-api-node` package this used to use). As of Spotify's
+ * February 2026 policy change, EVERY Development Mode app now requires its
+ * owner to have an active Spotify Premium subscription - without one, every
+ * single API call (even basic, read-only track lookups using nothing but a
+ * Client ID/Secret) fails with a bare `403 Forbidden` and an empty body.
+ * That's exactly what was happening here: the client-credentials token
+ * exchange succeeded, but the very next call to fetch track data was
+ * rejected outright by Spotify's backend, with no further account activity
+ * possible until the developer account goes Premium.
+ *
+ * Instead, this fetches the same public "embed" page Spotify serves for
+ * link-preview widgets (the kind you see when a Spotify link is pasted into
+ * Discord/Twitter/etc.) - no login, no API key, no Premium requirement,
+ * just a normal public web page - and pulls the track/artist data out of a
+ * JSON blob embedded in that page's markup. This is exactly what the
+ * `spotify-url-info` npm package (a small, actively maintained library)
+ * does, so it's used here instead of hand-rolling the HTML scraping.
  */
-function describeSpotifyError(err, context) {
-  // Log everything we can see on the error object - statusCode and headers
-  // matter as much as body here, since an empty `{}` body (no `error` key
-  // at all) could mean a 404 for a bad id, a 401/403 permissions problem,
-  // or Spotify/a proxy blocking the request with a non-JSON response that
-  // never reached the `body` shape the library expects.
-  console.error(
-    `[spotify] ${context} failed: statusCode=${err?.statusCode} name=${err?.name} message=${err?.message}`,
-  );
-  console.error(`[spotify] ${context} full error object:`, util.inspect(err, { depth: 6 }));
 
-  const body = err?.body;
-  if (body?.error_description) {
-    return `${body.error || 'Spotify error'}: ${body.error_description}`;
-  }
-  if (typeof body?.error === 'string') {
-    return body.error;
-  }
-  if (typeof body?.error?.message === 'string') {
-    return body.error.message;
-  }
-  if (typeof err?.message === 'string' && err.message && err.message !== '[object Object]') {
-    return err.message;
-  }
-  if (err?.statusCode === 429) {
-    return 'Spotify is rate-limiting this bot right now. Please try again in a moment.';
-  }
-  if (err?.statusCode) {
-    return `Spotify API returned an unexpected error (status ${err.statusCode}).`;
-  }
-  return 'An unexpected error occurred while contacting Spotify.';
-}
-
-async function ensureToken() {
-  if (Date.now() < tokenExpiresAt) return;
-  try {
-    const data = await spotifyApi.clientCredentialsGrant();
-    spotifyApi.setAccessToken(data.body.access_token);
-    tokenExpiresAt = Date.now() + (data.body.expires_in - 60) * 1000;
-  } catch (err) {
-    throw new Error(describeSpotifyError(err, 'clientCredentialsGrant'));
-  }
-}
+const spotifyUrlInfo = require('spotify-url-info')(fetch);
 
 function trackToObj(t) {
-  const artists = (t.artists || []).map((a) => a.name).join(', ');
+  const artist = t.artist || 'Unknown Artist';
   return {
-    // Spotify's API only gives metadata, never audio — this track has
-    // no playable `url` yet. The player looks it up on YouTube by
-    // `searchQuery` right before it plays.
-    title: `${t.name} - ${artists}`,
+    title: `${t.name} - ${artist}`,
     url: null,
-    duration: t.duration_ms ? Math.round(t.duration_ms / 1000) : null,
-    thumbnail: t.album?.images?.[0]?.url,
+    // `duration` here is Spotify's raw embed-page field, in milliseconds
+    // (same unit the official API used) - but it isn't documented anywhere,
+    // so this is defensive about anything other than a plain number.
+    duration: typeof t.duration === 'number' ? Math.round(t.duration / 1000) : null,
+    thumbnail: null,
     source: 'spotify',
-    searchQuery: `${t.name} ${artists}`,
+    searchQuery: `${t.name} ${artist}`,
   };
 }
 
 /**
  * Resolve a Spotify track, album, or playlist link into track metadata.
- * Requires SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET (client-credentials
- * flow — no user login needed, just an app registered on Spotify's
- * developer dashboard).
  */
 async function resolveSpotify(url) {
-  if (!config.spotifyClientId || !config.spotifyClientSecret) {
-    throw new Error('Spotify support is not configured (missing SPOTIFY_CLIENT_ID/SPOTIFY_CLIENT_SECRET in .env).');
-  }
-
-  await ensureToken();
-
-  const trackMatch = url.match(/track\/([a-zA-Z0-9]+)/);
-  const albumMatch = url.match(/album\/([a-zA-Z0-9]+)/);
-  const playlistMatch = url.match(/playlist\/([a-zA-Z0-9]+)/);
-
+  let tracks;
   try {
-    if (trackMatch) {
-      const { body } = await spotifyApi.getTrack(trackMatch[1]);
-      return [trackToObj(body)];
-    }
-
-    if (albumMatch) {
-      const { body } = await spotifyApi.getAlbum(albumMatch[1]);
-      return body.tracks.items.map((t) => trackToObj({ ...t, album: body }));
-    }
-
-    if (playlistMatch) {
-      const { body } = await spotifyApi.getPlaylistTracks(playlistMatch[1]);
-      return body.items.filter((i) => i.track).map((i) => trackToObj(i.track));
-    }
+    tracks = await spotifyUrlInfo.getTracks(url);
   } catch (err) {
-    throw new Error(describeSpotifyError(err, 'track/album/playlist lookup'));
+    console.error('[spotify] getTracks failed:', err);
+    throw new Error(
+      "Couldn't read that Spotify link. Make sure it's a public track, album, or playlist link.",
+    );
   }
 
-  throw new Error('Unrecognized Spotify link. Please share a track, album, or playlist link.');
+  if (!tracks || !tracks.length) {
+    throw new Error('Could not find any tracks for that Spotify link.');
+  }
+
+  return tracks.map(trackToObj);
 }
 
 module.exports = { resolveSpotify };
