@@ -53,8 +53,16 @@ function baseArgs({ noPlaylist = false } = {}) {
   // config.ytPlayerClients for why this is configurable. Harmless no-op
   // for non-YouTube URLs (SoundCloud, etc.) — yt-dlp just ignores an
   // extractor-args block that doesn't apply to the site being used.
-  if (config.ytPlayerClients) {
-    args.push('--extractor-args', `youtube:player_client=${config.ytPlayerClients}`);
+  //
+  // player_client and formats are combined into one youtube: extractor-args
+  // value (';'-separated) rather than two separate --extractor-args flags —
+  // both work, but one flag is less to get wrong if this is edited later.
+  // See config.ytFormatsArg for what 'formats' is doing here.
+  const youtubeExtractorArgs = [];
+  if (config.ytPlayerClients) youtubeExtractorArgs.push(`player_client=${config.ytPlayerClients}`);
+  if (config.ytFormatsArg) youtubeExtractorArgs.push(`formats=${config.ytFormatsArg}`);
+  if (youtubeExtractorArgs.length) {
+    args.push('--extractor-args', `youtube:${youtubeExtractorArgs.join(';')}`);
   }
   // Point yt-dlp at the bgutil PO Token provider plugin (see nixpacks.toml
   // and config.potProviderUrl) so it can get a real token instead of
