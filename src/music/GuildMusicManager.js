@@ -70,6 +70,28 @@ class GuildMusicManager {
       console.log(`[music:${this.guildId}] voice debug: ${message}`);
     });
 
+    // The 'debug' event above never actually surfaces the real reason the
+    // voice WebSocket closes — @discordjs/voice's own Networking class
+    // reads the numeric WebSocket close code internally (it decides
+    // whether to attempt a resume based on it) but doesn't log it anywhere
+    // public. Two tests in a row showed the connection reach "Hello" and
+    // then die immediately, before ever getting to Ready/UDP, on two
+    // completely different Discord voice servers (Sydney and Ashburn,
+    // different ports) — which means it isn't a regional routing problem,
+    // and the actual WebSocket close code is the one piece of information
+    // that would say WHY (e.g. 4006 session no longer valid, 4009 session
+    // timeout, 4014 disconnected, vs. something on our end). This reaches
+    // into the connection's internal networking object — not official
+    // public API, so it may need updating if @discordjs/voice's internals
+    // change — specifically to get at that code.
+    this.connection.on('stateChange', (oldState, newState) => {
+      if (newState.networking && newState.networking !== oldState.networking) {
+        newState.networking.on('close', (code) => {
+          console.log(`[music:${this.guildId}] voice websocket closed with code: ${code}`);
+        });
+      }
+    });
+
     // Logs every stage of the connection handshake, including the UDP
     // "IP discovery" step that establishes where to actually send audio
     // packets. This is specifically to catch a known failure mode on some
