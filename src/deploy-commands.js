@@ -15,15 +15,18 @@ const rest = new REST().setToken(config.token);
 
 (async () => {
   try {
-    const route = config.guildId
-      ? Routes.applicationGuildCommands(config.clientId, config.guildId)
-      : Routes.applicationCommands(config.clientId);
+    if (config.guildIds.length === 0) {
+      console.log(`Registering ${commands.length} command(s) globally...`);
+      await rest.put(Routes.applicationCommands(config.clientId), { body: commands });
+      console.log('Done. (Global commands can take up to an hour to appear.)');
+      return;
+    }
 
-    console.log(
-      `Registering ${commands.length} command(s)${config.guildId ? ` to guild ${config.guildId}` : ' globally'}...`,
-    );
-    await rest.put(route, { body: commands });
-    console.log('Done.' + (config.guildId ? '' : ' (Global commands can take up to an hour to appear.)'));
+    for (const guildId of config.guildIds) {
+      console.log(`Registering ${commands.length} command(s) to guild ${guildId}...`);
+      await rest.put(Routes.applicationGuildCommands(config.clientId, guildId), { body: commands });
+    }
+    console.log('Done.');
   } catch (err) {
     console.error('Failed to register commands:', err);
     process.exitCode = 1;
