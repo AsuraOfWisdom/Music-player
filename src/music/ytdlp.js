@@ -44,7 +44,7 @@ function ensureCookiesFile() {
 }
 
 function baseArgs({ noPlaylist = false } = {}) {
-  const args = ['--no-warnings'];
+  const args = ['--no-warnings', '--verbose'];
   if (noPlaylist) args.push('--no-playlist');
   const cookiesPath = ensureCookiesFile();
   if (cookiesPath) args.push('--cookies', cookiesPath);
@@ -95,6 +95,13 @@ function dumpJson(target, opts = {}) {
 
     child.on('close', (code) => {
       if (code !== 0 && !stdout.trim()) {
+        // --verbose (see baseArgs) makes yt-dlp print a lot here — which
+        // client it tried, whether the PO Token plugin loaded, whether it
+        // could reach the provider server, etc. That's exactly what's
+        // needed to diagnose PO Token/plugin issues, so log it in full to
+        // the Railway deploy log rather than just the one-line summary
+        // Discord shows (Discord's message length wouldn't fit it anyway).
+        console.error(`[yt-dlp] full output for "${target}":\n${stderr.trim()}`);
         const lastLine = stderr.trim().split('\n').filter(Boolean).pop();
         return reject(new Error(lastLine || `yt-dlp exited with code ${code}`));
       }
@@ -148,8 +155,12 @@ function spawnAudioStream(url) {
   ytdlp.stdout.on('error', () => {});
   ffmpeg.stdin.on('error', () => {});
 
+  // Bumped from 4000 to 16000 chars — --verbose (see baseArgs) means a lot
+  // more diagnostic output per track (client attempts, plugin/PO Token
+  // status) than plain error output did, and it's all useful when a track
+  // fails to download.
   let ytdlpStderr = '';
-  ytdlp.stderr.on('data', (chunk) => { ytdlpStderr = (ytdlpStderr + chunk).slice(-4000); });
+  ytdlp.stderr.on('data', (chunk) => { ytdlpStderr = (ytdlpStderr + chunk).slice(-16000); });
   let ffmpegStderr = '';
   ffmpeg.stderr.on('data', (chunk) => { ffmpegStderr = (ffmpegStderr + chunk).slice(-4000); });
 
@@ -160,6 +171,10 @@ function spawnAudioStream(url) {
 
   ytdlp.on('close', (code) => {
     if (code !== 0 && code !== null) {
+      // Logged in full to the Railway deploy log (see the matching comment
+      // in dumpJson above) — this is where PO Token/plugin problems during
+      // the actual download step (as opposed to metadata lookup) show up.
+      console.error(`[yt-dlp] full output for "${url}":\n${ytdlpStderr.trim()}`);
       const lastLine = ytdlpStderr.trim().split('\n').filter(Boolean).pop();
       fail(new Error(lastLine || `yt-dlp exited with code ${code}`));
     }
