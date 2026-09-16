@@ -12,6 +12,13 @@ const config = require('../config');
 // somewhere else.
 const YTDLP_BIN = process.env.YTDLP_PATH || '/usr/local/bin/yt-dlp';
 
+// Where the build (see nixpacks.toml) unzips the bgutil-ytdlp-pot-provider
+// plugin. Passed via --plugin-dirs rather than relying on yt-dlp's default
+// plugin search locations (~/.config/yt-dlp/plugins etc.), which depend on
+// $HOME/CWD being predictable at runtime — this path is absolute and fixed
+// at build time, so it always resolves the same way.
+const POT_PLUGIN_DIR = '/opt/yt-dlp-plugins';
+
 // yt-dlp's --cookies flag wants a real Netscape-format cookies file, not
 // an inline string, so the base64 env var gets decoded to disk once, on
 // first use, and reused for the life of the process.
@@ -41,6 +48,24 @@ function baseArgs({ noPlaylist = false } = {}) {
   if (noPlaylist) args.push('--no-playlist');
   const cookiesPath = ensureCookiesFile();
   if (cookiesPath) args.push('--cookies', cookiesPath);
+  // Selects YouTube "player clients" that (for now) aren't requiring a PO
+  // Token to actually download audio, not just read metadata. See
+  // config.ytPlayerClients for why this is configurable. Harmless no-op
+  // for non-YouTube URLs (SoundCloud, etc.) — yt-dlp just ignores an
+  // extractor-args block that doesn't apply to the site being used.
+  if (config.ytPlayerClients) {
+    args.push('--extractor-args', `youtube:player_client=${config.ytPlayerClients}`);
+  }
+  // Point yt-dlp at the bgutil PO Token provider plugin (see nixpacks.toml
+  // and config.potProviderUrl) so it can get a real token instead of
+  // relying on client selection alone, which YouTube keeps closing off.
+  // Only wired up when a provider URL is actually configured — with no
+  // companion service to talk to, loading the plugin would just add a
+  // failed network call to every request.
+  if (config.potProviderUrl) {
+    args.push('--plugin-dirs', POT_PLUGIN_DIR);
+    args.push('--extractor-args', `youtubepot-bgutilhttp:base_url=${config.potProviderUrl}`);
+  }
   return args;
 }
 
