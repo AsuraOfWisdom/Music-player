@@ -50,7 +50,28 @@ class GuildMusicManager {
       adapterCreator: voiceChannel.guild.voiceAdapterCreator,
       selfDeaf: true,
     });
-    this.connection.subscribe(this.player);
+    const subscription = this.connection.subscribe(this.player);
+    console.log(`[music:${this.guildId}] connection.subscribe() ${subscription ? 'succeeded' : 'FAILED (returned undefined)'}`);
+
+    // Logs every stage of the connection handshake, including the UDP
+    // "IP discovery" step that establishes where to actually send audio
+    // packets. This is specifically to catch a known failure mode on some
+    // cloud hosts (Railway included — see e.g. the open Railway Station
+    // thread "Discord voice UDP connections failing") where the bot can
+    // look completely healthy — joins the channel, resource downloads and
+    // "plays" fine, no thrown error anywhere — while the underlying UDP
+    // path to Discord's voice server never actually completes or silently
+    // stops delivering packets after the initial handshake. If that's what
+    // this is, the connection will either never reach Ready, or will emit
+    // an 'error' here (e.g. "Cannot perform IP discovery - socket closed").
+    for (const status of Object.values(VoiceConnectionStatus)) {
+      this.connection.on(status, () => {
+        console.log(`[music:${this.guildId}] voice connection -> ${status}`);
+      });
+    }
+    this.connection.on('error', (error) => {
+      console.error(`[music:${this.guildId}] voice connection error:`, error);
+    });
 
     this.connection.on(VoiceConnectionStatus.Disconnected, async () => {
       try {
