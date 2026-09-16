@@ -23,15 +23,29 @@ dependsOn = ['setup']
 # yt-dlp fetch tokens from a companion server (deployed as its own Railway
 # service running the brainicism/bgutil-ytdlp-pot-provider Docker image —
 # see the README) instead of guessing at client names. Installed by
-# unzipping the plugin release straight into a folder yt-dlp is told to
-# scan via --plugin-dirs (see src/music/ytdlp.js) — confirmed by inspecting
-# the zip that it extracts to <dir>/yt_dlp_plugins/... directly, no extra
-# nesting, so this dir is exactly the --plugin-dirs value.
+# unzipping the plugin release into a folder yt-dlp is told to scan via
+# --plugin-dirs (see src/music/ytdlp.js).
+#
+# The extra "pkg" subfolder here is NOT decorative — it's required by how
+# yt-dlp's plugin loader actually works, verified by reading its source
+# (yt_dlp/plugins.py) and testing directly: a --plugin-dirs path has its
+# *immediate children* treated as separate plugin packages, and each of
+# THOSE is searched for a yt_dlp_plugins/<type>/ folder inside it. Unzipping
+# straight into /opt/yt-dlp-plugins (so yt_dlp_plugins/ sits directly under
+# it) makes the loader look for /opt/yt-dlp-plugins/yt_dlp_plugins/yt_dlp_plugins/...
+# — one level too deep — and it silently finds nothing (yt-dlp doesn't
+# error on this, it just reports zero plugins loaded, which is exactly the
+# "PO Token Providers: none" / "Plugin directories: none" we kept seeing
+# no matter what else we changed). Extracting into a named subfolder
+# (/opt/yt-dlp-plugins/pkg/yt_dlp_plugins/...) makes that subfolder the
+# "package" the loader finds, with yt_dlp_plugins/ correctly one level
+# inside it — confirmed working by testing this exact layout locally
+# against the real yt-dlp binary before shipping it here.
 [phases.potplugin]
 cmds = [
-  'mkdir -p /opt/yt-dlp-plugins',
+  'mkdir -p /opt/yt-dlp-plugins/pkg',
   'curl -L https://github.com/Brainicism/bgutil-ytdlp-pot-provider/releases/latest/download/bgutil-ytdlp-pot-provider.zip -o /tmp/bgutil-plugin.zip',
-  'unzip -o /tmp/bgutil-plugin.zip -d /opt/yt-dlp-plugins',
+  'unzip -o /tmp/bgutil-plugin.zip -d /opt/yt-dlp-plugins/pkg',
   'rm /tmp/bgutil-plugin.zip',
 ]
 dependsOn = ['ytdlp']
