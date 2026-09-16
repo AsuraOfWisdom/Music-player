@@ -14,7 +14,7 @@
     "dotenv": "^16.4.5",
     "libsodium-wrappers": "^0.7.15",
     "opusscript": "^0.1.1",
-    "spotify-web-api-node": "^5.0.2"
+    "spotify-url-info": "^3.2.10"
   },
   "engines": {
     "node": ">=22.12.0"
