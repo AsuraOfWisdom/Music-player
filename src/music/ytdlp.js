@@ -49,6 +49,25 @@ function baseArgs({ noPlaylist = false } = {}) {
   if (noPlaylist) args.push('--no-playlist');
   const cookiesPath = ensureCookiesFile();
   if (cookiesPath) args.push('--cookies', cookiesPath);
+  // YouTube obfuscates the actual media URL behind an "n" parameter and a
+  // signature, both of which require running a small piece of YouTube's own
+  // JavaScript to decode — yt-dlp calls this its EJS ("embedded JS")
+  // challenge solver. Without a JS engine to run that code, formats come
+  // back missing or broken pretty much everywhere (this is what a Railway
+  // deploy log showed as "JS runtimes: none", right before "n challenge
+  // solving failed" / "Signature solving failed" warnings on EVERY client —
+  // tv, web, mweb, web_safari — which lines up with formats mysteriously
+  // vanishing across the board rather than just on one client).
+  //
+  // yt-dlp supports using Node.js for this, but — deliberately, since
+  // running a website's JS with a full, unsandboxed Node runtime is a real
+  // security consideration — it does NOT do so automatically just because
+  // Node is present; it has to be told to via --js-runtimes. We already
+  // have Node (nixpacks installs it to run this bot itself), so this comes
+  // for free: no extra download or package needed, unlike yt-dlp's own
+  // preferred option (Deno), which we'd have to install from scratch.
+  // Harmless no-op for sites that don't need it.
+  args.push('--js-runtimes', 'node');
   // Selects YouTube "player clients" that (for now) aren't requiring a PO
   // Token to actually download audio, not just read metadata. See
   // config.ytPlayerClients for why this is configurable. Harmless no-op
