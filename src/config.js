@@ -20,4 +20,12 @@ module.exports = {
   // it's an env var rather than hardcoded — adjust YT_PLAYER_CLIENTS on
   // Railway if this stops working again without needing a code change.
   ytPlayerClients: process.env.YT_PLAYER_CLIENTS || 'tv,android_vr,web_embedded,web_safari',
+  // Internal URL of a companion "PO Token provider" service — a small
+  // server that mints real YouTube PO Tokens on demand instead of relying
+  // on client-name tricks (which YouTube keeps closing off). Deployed as
+  // its own Railway service from the brainicism/bgutil-ytdlp-pot-provider
+  // Docker image; set this to that service's internal Railway URL, e.g.
+  // http://bgutil-pot.railway.internal:4416 (see the README). Leave unset
+  // to skip it entirely (falls back to plain client selection above).
+  potProviderUrl: process.env.POT_PROVIDER_URL || null,
 };
